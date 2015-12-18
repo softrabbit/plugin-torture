@@ -22,17 +22,21 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <xmmintrin.h>
+#include <pmmintrin.h>
 #include <getopt.h>
 #include <sstream>
 #include <list>
 #include <stdexcept>
 #include <signal.h>
+#include <time.h>
 #include "ladspa_plugin.h"
 #include "lv2_plugin.h"
 #include "log.h"
 #include "input_buffers.h"
 #include "tests.h"
 #include "input_profile.h"
+
+#define DEFAULT_N 1024
 
 using namespace std;
 
@@ -51,15 +55,21 @@ fp_exception_handler (int)
 	exit (2);
 }
 
-void
+double
 run_tests (list<Test*> const & tests, bool evil, Plugin* p, int N)
 {
+    clock_t start, end;
+    start = clock();
+
 	for (list<Test*>::const_iterator i = tests.begin(); i != tests.end(); ++i) {
 		if (evil || !(*i)->evil ()) {
 			log ((*i)->name ());
 			(*i)->run (p, N);
 		}
 	}
+
+    end = clock();
+    return ((double) (end - start)) / CLOCKS_PER_SEC;
 }
 
 static void
@@ -73,7 +83,8 @@ syntax (char* name)
 	     << "\t-i|--index index of plugin in LADSPA .so (defaults to 0)\n"
 	     << "\t-l|--lv2 plugin is LV2 (specify the .ttl, must be on LV2_PATH)\n"
 	     << "\t-g|--profile <input-profile> input settings to use\n"
-	     << "\t-p|--plugin <plugin.{so,ttl}> plugin to torture\n";
+	     << "\t-p|--plugin <plugin.{so,ttl}> plugin to torture\n"
+	     << "\t-n|--buffer-size buffer size (default " << DEFAULT_N << ")\n";
 	exit (EXIT_FAILURE);
 }
 	
@@ -101,6 +112,7 @@ main (int argc, char* argv[])
 	bool evil = false;
 	bool detect_denormals = false;
 	int ladspa_index = 0;
+	int N = 1024;
 
 	enum Type {
 		LADSPA,
@@ -125,11 +137,12 @@ main (int argc, char* argv[])
 			{ "lv2", no_argument, 0, 'l' },
 			{ "profile", required_argument, 0, 'g'},
 			{ "plugin", required_argument, 0, 'p'},
+			{ "buffer-size", required_argument, 0, 'n'},
 			{ 0, 0, 0, 0 }
 		};
 
 		int i;
-		int c = getopt_long (argc, argv, "hedasi:lg:p:", long_options, &i);
+		int c = getopt_long (argc, argv, "hedasi:lg:p:n:", long_options, &i);
 		if (c == -1) {
 			break;
 		}
@@ -162,6 +175,10 @@ main (int argc, char* argv[])
 		case 'p':
 			plugin_file = optarg;
 			break;
+		case 'n':
+			N = atoi (optarg);
+            N = N<1 ? DEFAULT_N : N;
+			break;
 		}
 	}
 			
@@ -173,6 +190,8 @@ main (int argc, char* argv[])
 		mxcsr &= ~_MM_MASK_DENORM;
 		_mm_setcsr (mxcsr);
 	}
+	_MM_SET_FLUSH_ZERO_MODE( _MM_FLUSH_ZERO_ON );
+	_MM_SET_DENORMALS_ZERO_MODE( _MM_DENORMALS_ZERO_ON );
 
 	Plugin* plugin = 0;
 	InputProfile* profile = 0;
@@ -204,10 +223,9 @@ main (int argc, char* argv[])
 		if (type == LADSPA) {
 			s << " index " << ladspa_index;
 		}
+        s << ", buffer size " << N;
 		log (s.str ());
 	}
-	
-	int N = 1024;
 
 	plugin->instantiate (sampling_rate);
 	plugin->activate ();
@@ -221,24 +239,25 @@ main (int argc, char* argv[])
 		log (s.str ());
 	}
 
+	stringstream s;
 	if (profile) {
 		
 		profile->begin_iteration ();
-
+		
 		while (1) {
 			profile->setup (plugin);
-			run_tests (tests, evil, plugin, N);
+			s << run_tests (tests, evil, plugin, N);
 			if (!profile->step()) {
 				break;
 			}
 		}
 		
 	} else {
-		
-		run_tests (tests, evil, plugin, N);
-		
+		s << run_tests (tests, evil, plugin, N);
+	
 	}
-		
+    s << " seconds";
+	log(s.str());
 	
 	plugin->deactivate ();
 	delete plugin;

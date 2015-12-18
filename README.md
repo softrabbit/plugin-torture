@@ -53,7 +53,7 @@ Command-line options
                       the LV2 search path.
 
 -g|--profile <profile>: file to specify the plugin control inputs to use; see below
-
+-n|--buffer-size: how many samples in a buffer (defaults to 1024)
 
 Input profiles
 ==============
